@@ -1,0 +1,12 @@
+allowBuilds:
+  '@google/genai': true
+  better-sqlite3: true
+  bigint-buffer: true
+  bufferutil: true
+  esbuild: true
+  protobufjs: true
+  sharp: true
+  utf-8-validate: true
+overrides:
+  zod-to-json-schema: 3.23.5
+  zod: ^3.24.1
