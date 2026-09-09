@@ -4,6 +4,56 @@ import path from "path";
 const WHALE_DB_FILE = path.join(process.cwd(), "data", "aboki-whales.json");
 const COORDINATION_FILE = path.join(process.cwd(), "data", "aboki-coordination.json");
 
+// ── HELIUS KEY ROTATION ──
+// Supports multiple Helius accounts so one exhausted key doesn't stall
+// every on-chain check. Add HELIUS_API_KEY, HELIUS_API_KEY_2, HELIUS_API_KEY_3
+// (and so on — any number works, not just two or three) to .env. A key
+// marked exhausted is retried automatically after 6h, since Helius quotas
+// typically reset daily — no restart needed for the pool to self-heal.
+const HELIUS_KEY_RESET_MS = 6 * 60 * 60 * 1000;
+let heliusKeyIndex = 0;
+const heliusExhaustedAt: Record<number, number> = {};
+
+function getHeliusKeyPool(): string[] {
+  const keys: string[] = [];
+  if (process.env.HELIUS_API_KEY) keys.push(process.env.HELIUS_API_KEY);
+  let i = 2;
+  while (process.env[`HELIUS_API_KEY_${i}`]) {
+    keys.push(process.env[`HELIUS_API_KEY_${i}`]!);
+    i++;
+  }
+  return keys;
+}
+
+function getActiveHeliusKey(): string | null {
+  const keys = getHeliusKeyPool();
+  if (keys.length === 0) return null;
+
+  const now = Date.now();
+  for (let attempt = 0; attempt < keys.length; attempt++) {
+    const idx = (heliusKeyIndex + attempt) % keys.length;
+    const exhaustedAt = heliusExhaustedAt[idx];
+    if (!exhaustedAt || now - exhaustedAt > HELIUS_KEY_RESET_MS) {
+      heliusKeyIndex = idx;
+      return keys[idx];
+    }
+  }
+  return null; // every key is currently exhausted and still within cooldown
+}
+
+function reportHeliusKeyExhausted(key: string) {
+  const keys = getHeliusKeyPool();
+  const idx = keys.indexOf(key);
+  if (idx === -1) return;
+  heliusExhaustedAt[idx] = Date.now();
+  console.warn(`⚠️ Helius key #${idx + 1} marked exhausted — rotating (retries in 6h)`);
+  heliusKeyIndex = (idx + 1) % keys.length;
+}
+
+function isQuotaError(status: number, bodyText: string): boolean {
+  return status === 429 || /max usage|quota|rate limit/i.test(bodyText);
+}
+
 // ── INTERFACES ──
 interface WalletProfile {
     address: string;
@@ -140,12 +190,20 @@ export async function getEarlyBuyers(
     tokenSymbol: string
 ): Promise<string[]> {
     try {
-        const heliusKey = process.env.HELIUS_API_KEY;
+        const heliusKey = getActiveHeliusKey();
         if (!heliusKey) return [];
 
         const res = await fetch(
             `https://api.helius.xyz/v0/addresses/${tokenMint}/transactions?api-key=${heliusKey}&limit=20&type=SWAP`
         );
+
+        if (!res.ok) {
+            const text = await res.text();
+            if (isQuotaError(res.status, text)) reportHeliusKeyExhausted(heliusKey);
+            console.warn(`⚠️ Helius buyer scan skipped for ${tokenSymbol}: HTTP ${res.status} — ${text.slice(0, 80)}`);
+            return [];
+        }
+
         const data = await res.json();
 
         if (!Array.isArray(data)) return [];
@@ -486,7 +544,7 @@ export async function getHolderConcentration(
     pairAddress?: string
 ): Promise<HolderSnapshot | null> {
     try {
-        const heliusKey = process.env.HELIUS_API_KEY;
+        const heliusKey = getActiveHeliusKey();
         if (!heliusKey) return null;
 
         const rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${heliusKey}`;
@@ -513,6 +571,14 @@ export async function getHolderConcentration(
                 }),
             }),
         ]);
+
+        if (!largestRes.ok || !supplyRes.ok) {
+            const failedRes = !largestRes.ok ? largestRes : supplyRes;
+            const text = await failedRes.text();
+            if (isQuotaError(failedRes.status, text)) reportHeliusKeyExhausted(heliusKey);
+            console.warn(`⚠️ Helius holder check skipped for ${tokenMint}: HTTP ${failedRes.status} — ${text.slice(0, 80)}`);
+            return null;
+        }
 
         const largestData = await largestRes.json();
         const supplyData = await supplyRes.json();
@@ -618,7 +684,7 @@ export async function getWalletFundingTime(
     address: string
 ): Promise<{ timestamp: number; ageMinutes: number } | null> {
     try {
-        const heliusKey = process.env.HELIUS_API_KEY;
+        const heliusKey = getActiveHeliusKey();
         if (!heliusKey) return null;
 
         const rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${heliusKey}`;
@@ -643,6 +709,14 @@ export async function getWalletFundingTime(
                     params,
                 }),
             });
+
+            if (!res.ok) {
+                const text = await res.text();
+                if (isQuotaError(res.status, text)) reportHeliusKeyExhausted(heliusKey);
+                console.warn(`⚠️ Helius wallet-age check skipped for ${address}: HTTP ${res.status} — ${text.slice(0, 80)}`);
+                break; // stop paging this wallet, return whatever we already have
+            }
+
             const data = await res.json();
             const sigs = data?.result || [];
 
