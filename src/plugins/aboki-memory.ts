@@ -62,7 +62,7 @@ export function initializeMemory(): void {
 
   if (!fs.existsSync(TRADES_FILE)) {
     fs.writeFileSync(TRADES_FILE, JSON.stringify([], null, 2));
-    console.log(" Aboki trade log initialized");
+    console.log("📝 Aboki trade log initialized");
   }
 }
 
@@ -114,7 +114,7 @@ export function logTrade(trade: Omit<TradeLog, "id" | "timestamp">): void {
   // Keep only last 100 trades
   const recent = trades.slice(-100);
   fs.writeFileSync(TRADES_FILE, JSON.stringify(recent, null, 2));
-  console.log(` Logged trade decision: ${trade.decision} ${trade.symbol} (${trade.confidence}% confidence)`);
+  console.log(`📝 Logged trade decision: ${trade.decision} ${trade.symbol} (${trade.confidence}% confidence)`);
 }
 
 // ── SELF REVIEW — THE LEARNING ENGINE ──
@@ -201,10 +201,10 @@ RESPOND IN THIS EXACT JSON FORMAT ONLY:
     fs.writeFileSync(MEMORY_FILE, JSON.stringify(updatedMemory, null, 2));
 
     console.log("易 ABOKI SELF-REVIEW COMPLETE:");
-    console.log(` Analysis: ${result.analysis}`);
-    console.log(` Lesson: ${result.lessonLearned}`);
+    console.log(`📊 Analysis: ${result.analysis}`);
+    console.log(`📚 Lesson: ${result.lessonLearned}`);
     console.log(`✅ Rules updated: ${result.updatedRules?.length || 0} rules`);
-    console.log(` New patterns found: ${result.newPatternsFound?.join(", ") || "none"}`);
+    console.log(`🔍 New patterns found: ${result.newPatternsFound?.join(", ") || "none"}`);
 
   } catch (e) {
     console.error("Self-review error:", e);
@@ -245,5 +245,5 @@ export function updateTradeOutcome(
     losses: outcome === "LOSS" ? memory.losses + 1 : memory.losses,
   };
   fs.writeFileSync(MEMORY_FILE, JSON.stringify(updatedMemory, null, 2));
-console.log(` Trade outcome updated: ${symbol} → ${outcome} (${profitLoss > 0 ? "+" : ""}${profitLoss}%)`);
+console.log(`📊 Trade outcome updated: ${symbol} → ${outcome} (${profitLoss > 0 ? "+" : ""}${profitLoss}%)`);
 }

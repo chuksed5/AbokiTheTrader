@@ -20,6 +20,9 @@ import {
   PARABOLIC_PENALTY,
   DUMPING_PENALTY,
   HARD_VETO_HIGH_VOL_PARABOLIC,
+  TOP_HOLDER_VETO_PCT,
+  TOP3_HOLDER_VETO_PCT,
+  MIN_CONFIDENCE_FLOOR,
 } from "../config/backtest-scores.ts";
 import { Plugin, IAgentRuntime } from "@elizaos/core";
 import {
@@ -281,7 +284,13 @@ async function tradingLoop(runtime: IAgentRuntime): Promise<void> {
       scanCount++;
 
       const riskProfile = getRiskProfile();
-      const threshold = riskProfile.confidenceThreshold;
+      // The live risk-profile system reacts fast to recent trades (good for
+      // catching a bad streak quickly) but only looks at a short window.
+      // MIN_CONFIDENCE_FLOOR is the backtest harness's slower, much
+      // larger-sample verdict on what confidence level actually wins —
+      // it can only push the bar UP, never below what the risk profile
+      // already wants, so the two systems complement rather than fight.
+      const threshold = Math.max(riskProfile.confidenceThreshold, MIN_CONFIDENCE_FLOOR);
 
       console.log(`🔍 Scanning... (scan #${scanCount}) | Risk: ${riskProfile.currentLevel} | Threshold: ${threshold}%`);
 
@@ -427,7 +436,31 @@ async function tradingLoop(runtime: IAgentRuntime): Promise<void> {
         if (score.shouldBuy && score.confidence >= threshold) {
           holderSnapshot = await getHolderConcentration(token.mint, dexData?.pairAddress);
 
-          if (holderSnapshot?.topHolderOwners?.length) {
+          if (!holderSnapshot) {
+            // Fail CLOSED, not open — if we can't verify holder distribution
+            // at all (RPC down, no API key, no data), don't send an
+            // unverified signal. This was previously a silent gap: no
+            // snapshot meant no check ran, and the buy went through anyway.
+            score.shouldBuy = false;
+            score.reason += ` | 🚫 Vetoed — holder concentration data unavailable, skipping for safety`;
+            console.log(`🚫 ${token.symbol}: Hard veto — no holder data (fail-closed)`);
+          } else {
+            // Raw supply concentration — catches a single large holder or
+            // a tight top-3 dumping together, independent of whether they
+            // were funded in a cluster. Complements the funding-cluster
+            // check below, which only catches coordinated *bundle* setups.
+            if (holderSnapshot.topHolderPct >= TOP_HOLDER_VETO_PCT) {
+              score.shouldBuy = false;
+              score.reason += ` | 🚫 Vetoed — top holder owns ${holderSnapshot.topHolderPct}% of supply (>= ${TOP_HOLDER_VETO_PCT}% cap)`;
+              console.log(`🚫 ${token.symbol}: Hard veto — top holder ${holderSnapshot.topHolderPct}%`);
+            } else if (holderSnapshot.top3HolderPct >= TOP3_HOLDER_VETO_PCT) {
+              score.shouldBuy = false;
+              score.reason += ` | 🚫 Vetoed — top 3 holders own ${holderSnapshot.top3HolderPct}% combined (>= ${TOP3_HOLDER_VETO_PCT}% cap)`;
+              console.log(`🚫 ${token.symbol}: Hard veto — top 3 holders ${holderSnapshot.top3HolderPct}%`);
+            }
+          }
+
+          if (score.shouldBuy && holderSnapshot?.topHolderOwners?.length) {
             const fundingCluster = await detectFundingCluster(holderSnapshot.topHolderOwners);
             if (fundingCluster.isSuspicious) {
               const ages = fundingCluster.clusteredWallets.map(w => `${w.ageMinutes}m`).join(", ");

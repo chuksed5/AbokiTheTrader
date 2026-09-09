@@ -64,7 +64,7 @@ export function initializeCallTracker(): void {
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
   if (!fs.existsSync(CALLS_FILE)) {
     writeCalls({ calls: [] });
-    console.log(" Call tracker initialized");
+    console.log("📋 Call tracker initialized");
   }
 }
 
@@ -111,7 +111,7 @@ export function recordCall(
 
   state.calls.push(call);
   writeCalls(state);
-  console.log(` Call recorded: ${symbol} at MC $${mc.toFixed(0)}`);
+  console.log(`📋 Call recorded: ${symbol} at MC $${mc.toFixed(0)}`);
 }
 
 // ── GET ACTIVE CALLS (not closed) ──
@@ -134,7 +134,7 @@ function onChainLine(call: TrackedCall): string {
     delta <= -1 ? `⬇ ${delta.toFixed(1)}pp since call` :
     "→ stable since call";
   return (
-    `\n Top holder: ${call.lastTopHolderPct}% (${trend})` +
+    `\n🐋 Top holder: ${call.lastTopHolderPct}% (${trend})` +
     `\n   Tracked whales in: ${call.lastWhaleCount ?? 0}${call.lastInsiderCount ? ` (${call.lastInsiderCount} insider-flagged)` : ""}`
   );
 }
@@ -241,7 +241,7 @@ export function updateCall(
     call.closedAt = now.toISOString();
     call.closeReason = "Liquidity collapsed";
     alerts.push(
-      ` <b>RUGGED</b> — $${call.symbol}\n\n` +
+      `💀 <b>RUGGED</b> — $${call.symbol}\n\n` +
       `Called at: $${formatMC(call.calledMC)} MC\n` +
       `Rugged at: $${formatMC(currentMC)} MC\n` +
       `Liquidity remaining: $${liquidityUsd.toFixed(0)}\n` +
@@ -296,13 +296,13 @@ export function updateCall(
 
   // ── CHECK: MILESTONES ──
   const milestones = [
-    { label: "2x",  threshold: 2,   emoji: "" },
-    { label: "3x",  threshold: 3,   emoji: "" },
-    { label: "5x",  threshold: 5,   emoji: "" },
-    { label: "10x", threshold: 10,  emoji: "" },
-    { label: "20x", threshold: 20,  emoji: "" },
-    { label: "50x", threshold: 50,  emoji: "" },
-    { label: "100x",threshold: 100, emoji: "" },
+    { label: "2x",  threshold: 2,   emoji: "📈" },
+    { label: "3x",  threshold: 3,   emoji: "📈" },
+    { label: "5x",  threshold: 5,   emoji: "🚀" },
+    { label: "10x", threshold: 10,  emoji: "🔥" },
+    { label: "20x", threshold: 20,  emoji: "💎" },
+    { label: "50x", threshold: 50,  emoji: "🌙" },
+    { label: "100x",threshold: 100, emoji: "👑" },
   ];
 
   for (const milestone of milestones) {
@@ -406,28 +406,28 @@ export function getDailySummary(): string {
   const rugged = valid.filter(c => c.status === "RUGGED" && new Date(c.calledAt) > last24h);
   const dead = valid.filter(c => c.status === "DEAD" && new Date(c.calledAt) > last24h);
 
-  let summary = ` <b>ABOKI DAILY REPORT</b>\n`;
+  let summary = `📊 <b>ABOKI DAILY REPORT</b>\n`;
   summary += `━━━━━━━━━━━━━━━━━━\n`;
-  summary += ` ${now.toUTCString()}\n\n`;
-  summary += ` Calls last 24h: ${recent.length}\n`;
-  summary += ` Currently tracking: ${active.length}\n`;
-  summary += ` Mooned: ${mooned.length}\n`;
-  summary += ` Rugged: ${rugged.length}\n`;
+  summary += `🕐 ${now.toUTCString()}\n\n`;
+  summary += `📋 Calls last 24h: ${recent.length}\n`;
+  summary += `👁 Currently tracking: ${active.length}\n`;
+  summary += `🌙 Mooned: ${mooned.length}\n`;
+  summary += `💀 Rugged: ${rugged.length}\n`;
   summary += `⚰ Dead: ${dead.length}\n\n`;
 
   if (active.length > 0) {
     summary += `<b>ACTIVE CALLS:</b>\n`;
     for (const call of active.slice(0, 10)) {
-      const icon = call.currentMultiple >= 10 ? "" :
-                   call.currentMultiple >= 5  ? "" :
-                   call.currentMultiple >= 2  ? "" :
-                   call.currentMultiple >= 1  ? "➖" : "";
+      const icon = call.currentMultiple >= 10 ? "🌙" :
+                   call.currentMultiple >= 5  ? "🚀" :
+                   call.currentMultiple >= 2  ? "📈" :
+                   call.currentMultiple >= 1  ? "➖" : "📉";
       summary += `${icon} $${call.symbol}: ${call.currentMultiple}x (Peak: ${call.peakMultiple}x) | MC: $${formatMC(call.currentMC)}\n`;
     }
   }
 
   if (mooned.length > 0) {
-    summary += `\n<b> BEST CALLS EVER:</b>\n`;
+    summary += `\n<b>🏆 BEST CALLS EVER:</b>\n`;
     const top = [...valid]
       .sort((a, b) => b.peakMultiple - a.peakMultiple)
       .slice(0, 5);
@@ -464,9 +464,9 @@ function formatMC(mc: number | undefined | null): string {
 // ── GET ALL CALLS SUMMARY (for console logs) ──
 export function getCallsSummary(): string {
   const active = getActiveCalls();
-  if (active.length === 0) return " No active calls being tracked";
+  if (active.length === 0) return "📋 No active calls being tracked";
   const lines = active.map(c =>
     `  • $${c.symbol}: ${c.currentMultiple}x | Peak: ${c.peakMultiple}x | Status: ${c.status}`
   );
-  return ` TRACKING ${active.length} CALLS:\n${lines.join("\n")}`;
-;
+  return `📋 TRACKING ${active.length} CALLS:\n${lines.join("\n")}`;
+}

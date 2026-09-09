@@ -17,22 +17,32 @@
 // ─────────────────────────────────────────────────────────────
 
 // BACKTEST_SCORES_START — auto-updated by scripts/backtest.mjs
-// Last run: never (defaults match the original hardcoded values)
-export const HIGH_VOL_PENALTY = 5;          // 5m vol >= $30k ("could be late")
+// Last run: 2026-09-08 (server) | Closed calls: 389 | Hit rate: 26% (103W/286L)
+export const HIGH_VOL_PENALTY = 0;          // 5m vol >= $30k ("could be late") — tuned from 5, -11% impact on 166 samples
 export const PARABOLIC_PENALTY = -5;        // 5m change >= 50% ("parabolic")
 export const DUMPING_PENALTY = -12;         // 5m change < -10% ("dumping")
 export const OVERSATURATED_PENALTY = -10;   // ticker has many prior Solana pairs
 export const COMMUNITY_BOOST = 10;          // has socials/website (LIKELY_COMMUNITY)
 // BACKTEST_SCORES_END
 
+// Raw supply-concentration hard vetoes — not yet backtest-tuned (need real
+// veto/no-veto outcome data first), but grounded in the 20-25% single-wallet
+// risk threshold widely used for pump.fun dev/bundle-dump detection.
+export const TOP_HOLDER_VETO_PCT = 25;   // any single wallet owning >= this % blocks the buy
+export const TOP3_HOLDER_VETO_PCT = 35;  // top 3 combined owning >= this % blocks the buy
+
+// BACKTEST_CONFIDENCE_FLOOR_START — auto-updated by scripts/backtest.mjs
+// Hard floor on the confidence threshold, sourced from cumulative real
+// win-rate data (not the live risk-profile system's short-window reaction).
+// Can only ever raise the effective bar, never lower it below what the
+// live system already wants — see analyseConfidenceFloor() in backtest.mjs.
+// Last run: never (default matches the original NORMAL threshold)
+export const MIN_CONFIDENCE_FLOOR = 72;
+// BACKTEST_CONFIDENCE_FLOOR_END
+
 // BACKTEST_COMBO_VETO_START — auto-updated by scripts/backtest.mjs
-// A hard veto (blocks the buy outright) is only ever turned on here once
-// there are at least 25 closed calls that hit BOTH conditions together
-// AND the combined win rate is <=5%. Below that bar this stays false —
-// see analyseComboVeto() in backtest.mjs for the exact check re-run
-// every week against current data. This is not a one-way ratchet: if
-// later data no longer supports it, the next run turns it back off.
-// Last run: never (no combo data evaluated yet)
+// Last run: 2026-09-08 (server) | Combo samples: 35 | Combo win rate: 14%
+// Still OFF — 14% is well above the 5% max win-rate bar required to veto.
 export const HARD_VETO_HIGH_VOL_PARABOLIC = false;
 // BACKTEST_COMBO_VETO_END
 

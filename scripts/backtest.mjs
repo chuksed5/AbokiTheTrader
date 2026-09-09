@@ -156,6 +156,14 @@ function loadCurrentComboVeto() {
   return m ? m[1] === "true" : false;
 }
 
+// ── Load current confidence floor from src/config/backtest-scores.ts ──
+function loadCurrentConfidenceFloor() {
+  if (!existsSync(CONFIG_FILE)) return 72;
+  const code = readFileSync(CONFIG_FILE, "utf8");
+  const m = code.match(/export const MIN_CONFIDENCE_FLOOR\s*=\s*(\d+)/);
+  return m ? parseInt(m[1]) : 72;
+}
+
 // ── Analyse calls ──
 function analyse(calls) {
   const WIN = 2;
@@ -208,6 +216,7 @@ function analyse(calls) {
       impact, sampleCount,
       significant: Math.abs(impact ?? 0) > 10 && sampleCount >= MIN_SAMPLES,
       recommendation,
+      autoApply: f.autoApply,
     };
   });
 
@@ -250,6 +259,38 @@ function analyse(calls) {
     recommendedState: comboVetoRecommended,
   };
 
+  // Confidence floor — cumulative win rate for "confidence >= X", swept
+  // across real closed calls. Finds the LOWEST X that clears a target win
+  // rate with enough samples. Never recommends going below the current
+  // floor already in the config file — this only ever tightens the gate,
+  // matching the stated goal of fewer, better calls, not a random walk.
+  const CONF_FLOOR_CANDIDATES = [72, 75, 78, 80, 82, 85, 88, 90, 92, 95];
+  const CONF_FLOOR_MIN_SAMPLES = 20;
+  const CONF_FLOOR_TARGET_WINRATE = 35; // percent
+  const currentFloor = loadCurrentConfidenceFloor();
+
+  const floorSweep = CONF_FLOOR_CANDIDATES.map(x => {
+    const atOrAbove = calls.filter(c => (c.confidence ?? 0) >= x);
+    const w = atOrAbove.filter(c => c.peakMultiple >= WIN).length;
+    const l = atOrAbove.filter(c => c.peakMultiple < WIN).length;
+    return { threshold: x, sampleCount: w + l, winRate: hr(w, l) };
+  });
+
+  const qualifying = floorSweep.filter(
+    f => f.sampleCount >= CONF_FLOOR_MIN_SAMPLES &&
+         f.winRate !== null &&
+         f.winRate >= CONF_FLOOR_TARGET_WINRATE
+  );
+  const bestFloor = qualifying.length > 0 ? qualifying[0].threshold : null;
+  const confidenceFloor = {
+    scoreVarName: "MIN_CONFIDENCE_FLOOR",
+    currentFloor,
+    sweep: floorSweep,
+    targetWinRate: CONF_FLOOR_TARGET_WINRATE,
+    minSamplesRequired: CONF_FLOOR_MIN_SAMPLES,
+    recommendedFloor: bestFloor !== null && bestFloor > currentFloor ? bestFloor : currentFloor,
+  };
+
   return {
     summary: {
       totalClosed: calls.length,
@@ -263,6 +304,7 @@ function analyse(calls) {
     features,
     concentrationVeto: concVeto,
     comboVeto,
+    confidenceFloor,
     generatedAt: new Date().toISOString(),
   };
 }
@@ -275,8 +317,9 @@ function analyse(calls) {
 function applyScoreChanges(report) {
   const changes = report.features.filter(f => f.recommendation && f.autoApply);
   const comboChanged = report.comboVeto.recommendedState !== report.comboVeto.currentState;
+  const floorChanged = report.confidenceFloor.recommendedFloor !== report.confidenceFloor.currentFloor;
 
-  if (changes.length === 0 && !comboChanged) return [];
+  if (changes.length === 0 && !comboChanged && !floorChanged) return [];
 
   if (!existsSync(CONFIG_FILE)) {
     throw new Error(`${CONFIG_FILE} not found — did the backtest-scores.ts refactor ship?`);
@@ -348,6 +391,31 @@ function applyScoreChanges(report) {
     });
   }
 
+  if (floorChanged) {
+    const cf = report.confidenceFloor;
+    const qualifyingRow = cf.sweep.find(s => s.threshold === cf.recommendedFloor);
+    const newFloorBlock =
+      `// BACKTEST_CONFIDENCE_FLOOR_START — auto-updated by scripts/backtest.mjs\n` +
+      `// Requires >= ${cf.minSamplesRequired} samples at this confidence level and >= ${cf.targetWinRate}% win rate.\n` +
+      `// Last run: ${new Date().toISOString()} | At >=${cf.recommendedFloor}%: ${qualifyingRow?.sampleCount ?? "N/A"} samples, ${qualifyingRow?.winRate ?? "N/A"}% win rate\n` +
+      `export const MIN_CONFIDENCE_FLOOR = ${cf.recommendedFloor};\n` +
+      `// BACKTEST_CONFIDENCE_FLOOR_END`;
+
+    code = code.replace(
+      /\/\/ BACKTEST_CONFIDENCE_FLOOR_START[\s\S]*?\/\/ BACKTEST_CONFIDENCE_FLOOR_END/,
+      newFloorBlock
+    );
+
+    applied.push({
+      name: "Minimum confidence floor",
+      from: cf.currentFloor,
+      to: cf.recommendedFloor,
+      action: "RAISE_FLOOR",
+      impact: qualifyingRow?.winRate ?? null,
+      samples: qualifyingRow?.sampleCount ?? 0,
+    });
+  }
+
   writeFileSync(CONFIG_FILE, code);
   return applied;
 }
@@ -387,7 +455,7 @@ async function sendTelegramReport(report, applied, restarted) {
   const chatId = process.env.TELEGRAM_CHAT_ID;
   if (!token || !chatId) return;
 
-  const { summary, features, concentrationVeto, comboVeto } = report;
+  const { summary, features, concentrationVeto, comboVeto, confidenceFloor } = report;
   const sigFeatures = features.filter(f => f.significant);
 
   let msg =
@@ -412,9 +480,11 @@ async function sendTelegramReport(report, applied, restarted) {
   if (applied.length > 0) {
     msg += `<b>🔧 Changes applied (${applied.length}):</b>\n`;
     applied.forEach(a => {
-      msg += typeof a.to === "boolean"
-        ? `• ${a.name}: ${a.from ? "ON" : "OFF"} → ${a.to ? "ON" : "OFF"} (${a.samples} samples, ${a.impact ?? "N/A"}% win rate)\n`
-        : `• ${a.name}: ${a.from}pts → ${a.to}pts\n`;
+      msg += a.action === "RAISE_FLOOR"
+        ? `• ${a.name}: ${a.from}% → ${a.to}% (${a.samples} samples, ${a.impact ?? "N/A"}% win rate)\n`
+        : typeof a.to === "boolean"
+          ? `• ${a.name}: ${a.from ? "ON" : "OFF"} → ${a.to ? "ON" : "OFF"} (${a.samples} samples, ${a.impact ?? "N/A"}% win rate)\n`
+          : `• ${a.name}: ${a.from}pts → ${a.to}pts\n`;
     });
     msg += `\n${restarted ? "✅ Agent restarted with new scores" : "⚠️ Agent restart failed — restart manually"}\n`;
   } else {
@@ -424,6 +494,11 @@ async function sendTelegramReport(report, applied, restarted) {
   msg += `\n<b>🚫 High-vol + parabolic combo veto:</b> ${comboVeto.currentState ? "ON" : "OFF"}\n` +
     `  ${comboVeto.sampleCount}/${comboVeto.minSamplesRequired} samples needed` +
     (comboVeto.winRate !== null ? `, ${comboVeto.winRate}% win rate so far` : "");
+
+  msg += `\n\n<b>🎯 Minimum confidence floor:</b> ${confidenceFloor.currentFloor}%`;
+  if (confidenceFloor.recommendedFloor !== confidenceFloor.currentFloor) {
+    msg += ` (recommending ${confidenceFloor.recommendedFloor}%)`;
+  }
 
   if (concentrationVeto.over20.winRate === 0 && concentrationVeto.over20.n >= 3) {
     msg += `\n⚠️ Concentration veto still active (0% win rate with top holder >20%)`;
@@ -456,7 +531,7 @@ async function main() {
   writeFileSync(REPORT_FILE, JSON.stringify(report, null, 2));
 
   // Print summary
-  const { summary, features, comboVeto } = report;
+  const { summary, features, comboVeto, confidenceFloor } = report;
   console.log(`📊 Hit rate: ${summary.overallHitRate}% (${summary.winners}W/${summary.losers}L)`);
   console.log(`   Avg winner: ${summary.avgWinnerPeak}x | Top: ${summary.topCalls[0]?.symbol} ${summary.topCalls[0]?.peak}x\n`);
 
@@ -479,21 +554,37 @@ async function main() {
   }
   console.log();
 
+  console.log(`🎯 Minimum confidence floor: ${confidenceFloor.currentFloor}%`);
+  confidenceFloor.sweep.forEach(s => {
+    if (s.sampleCount > 0) {
+      console.log(`   >=${s.threshold}%: ${s.winRate ?? "N/A"}% win rate (${s.sampleCount} samples)`);
+    }
+  });
+  if (confidenceFloor.recommendedFloor !== confidenceFloor.currentFloor) {
+    console.log(`   ⚙️  Recommendation: raise floor to ${confidenceFloor.recommendedFloor}%`);
+  }
+  console.log();
+
   // Apply changes
   let applied = [];
   let restarted = false;
 
   const comboChanged = comboVeto.recommendedState !== comboVeto.currentState;
+  const floorChanged = confidenceFloor.recommendedFloor !== confidenceFloor.currentFloor;
 
   if (autoApply && calls.length >= MIN_CLOSED) {
     const changes = report.features.filter(f => f.recommendation && f.autoApply);
-    if (changes.length > 0 || comboChanged) {
-      console.log(`Applying ${changes.length + (comboChanged ? 1 : 0)} change(s)...`);
+    const totalChanges = changes.length + (comboChanged ? 1 : 0) + (floorChanged ? 1 : 0);
+    if (totalChanges > 0) {
+      console.log(`Applying ${totalChanges} change(s)...`);
       applied = applyScoreChanges(report);
       applied.forEach(a => {
-        console.log(typeof a.to === "boolean"
-          ? `  ✅ ${a.name}: ${a.from ? "ON" : "OFF"} → ${a.to ? "ON" : "OFF"}`
-          : `  ✅ ${a.name}: ${a.from}pts → ${a.to}pts`);
+        const line = a.action === "RAISE_FLOOR"
+          ? `  ✅ ${a.name}: ${a.from}% → ${a.to}%`
+          : typeof a.to === "boolean"
+            ? `  ✅ ${a.name}: ${a.from ? "ON" : "OFF"} → ${a.to ? "ON" : "OFF"}`
+            : `  ✅ ${a.name}: ${a.from}pts → ${a.to}pts`;
+        console.log(line);
       });
       restarted = restartAgent();
     } else {
