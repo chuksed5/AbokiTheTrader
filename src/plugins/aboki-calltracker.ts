@@ -40,6 +40,7 @@ export interface TrackedCall {
   lastTop3HolderPct?: number;
   lastWhaleCount?: number;
   lastInsiderCount?: number;
+  lastConcentrationAlertPct?: number; // topHolderPct at the last time we actually sent a RISING alert
 }
 
 interface CallsState {
@@ -195,7 +196,12 @@ export function updateCall(
 
     // Fire a standalone warning if supply is concentrating meaningfully,
     // even if price hasn't hit a milestone or a closure condition.
-    if (deltaSinceEntry >= 8 && onChain.topHolderPct >= 12) {
+    // Gated on real ADDITIONAL movement since the last time we actually
+    // alerted — not just "still above the original bar" — so a token that
+    // hit 12% once and then went flat doesn't get re-warned identically on
+    // every single revisit forever.
+    const sinceLastAlert = onChain.topHolderPct - (call.lastConcentrationAlertPct ?? entryTopHolderPct);
+    if (deltaSinceEntry >= 8 && onChain.topHolderPct >= 12 && sinceLastAlert >= 3) {
       alerts.push(
         `⚠ <b>CONCENTRATION RISING</b> — $${call.symbol}\n\n` +
         `Top holder: ${onChain.topHolderPct}% (was ${entryTopHolderPct}% at call, +${deltaSinceEntry.toFixed(1)}pp)\n` +
@@ -203,6 +209,7 @@ export function updateCall(
         `Price: ${multiple.toFixed(2)}x since call\n\n` +
         `Supply is concentrating — dump risk building even though price may still look fine.`
       );
+      call.lastConcentrationAlertPct = onChain.topHolderPct;
     }
 
     // Once concentration crosses the SAME hard bar used to block a new buy

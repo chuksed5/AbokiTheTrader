@@ -602,8 +602,19 @@ export async function getHolderConcentration(
                 const dexData = await dexRes.json();
                 poolAddress = dexData?.pairs?.[0]?.pairAddress;
             } catch {
-                // best-effort — proceed without pool filtering if this fails
+                // fall through — handled by the check below
             }
+        }
+
+        if (!poolAddress) {
+            // Can't reliably tell the pool's own vault apart from a real
+            // wallet without this. Proceeding anyway risks miscounting the
+            // AMM's own token balance as a "whale" — especially likely on a
+            // token that's already crashed hard, since a crashing pool
+            // naturally fills up with tokens everyone just sold into it.
+            // Fail closed: no number is safer than a possibly-wrong one.
+            console.warn(`⚠️ Could not resolve pool address for ${tokenMint} — skipping concentration check (fail-closed)`);
+            return null;
         }
 
         // Check who actually owns each of the top few token accounts.
