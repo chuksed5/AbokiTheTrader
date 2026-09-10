@@ -6,11 +6,12 @@ import {
   getEarlyBuyers,
   checkWhaleActivity,
 } from "./aboki-whale-intel.ts";
+import { TOP_HOLDER_VETO_PCT, TOP3_HOLDER_VETO_PCT } from "../config/backtest-scores.ts";
 
 const CALLS_FILE = path.join(process.cwd(), "data", "aboki-calls.json");
 
 // ── INTERFACES ──
-export type CallStatus = "WATCHING" | "PUMPING" | "MOONED" | "RUGGED" | "DEAD" | "EXPIRED";
+export type CallStatus = "WATCHING" | "PUMPING" | "MOONED" | "RUGGED" | "DEAD" | "EXPIRED" | "CONCENTRATED";
 
 export interface TrackedCall {
   id: string;                  // unique id = mint + timestamp
@@ -83,7 +84,7 @@ export function recordCall(
 
   // Don't duplicate — if already tracking this mint and it's still open, skip
   const existing = state.calls.find(
-    c => c.mint === mint && !["RUGGED", "DEAD", "EXPIRED", "MOONED"].includes(c.status)
+    c => c.mint === mint && !["RUGGED", "DEAD", "EXPIRED", "MOONED", "CONCENTRATED"].includes(c.status)
   );
   if (existing) return;
 
@@ -119,7 +120,7 @@ export function getActiveCalls(): TrackedCall[] {
   const state = readCalls();
   return state.calls.filter(
     c => c.id && typeof c.calledMC === "number" && c.calledMC > 0 &&
-    (!["RUGGED", "DEAD", "EXPIRED"].includes(c.status) ||
+    (!["RUGGED", "DEAD", "EXPIRED", "CONCENTRATED"].includes(c.status) ||
     (c.status === "MOONED" && !c.closedAt))
   );
 }
@@ -201,6 +202,28 @@ export function updateCall(
         `Top 3 holders: ${onChain.top3HolderPct}%\n` +
         `Price: ${multiple.toFixed(2)}x since call\n\n` +
         `Supply is concentrating — dump risk building even though price may still look fine.`
+      );
+    }
+
+    // Once concentration crosses the SAME hard bar used to block a new buy
+    // (TOP_HOLDER_VETO_PCT / TOP3_HOLDER_VETO_PCT), stop tracking rather
+    // than keep re-alerting on something that's already past the line we
+    // consider too dangerous to enter. One clear closing message instead
+    // of an indefinite stream of "rising" warnings on the same token.
+    if (
+      call.status !== "CONCENTRATED" &&
+      (onChain.topHolderPct >= TOP_HOLDER_VETO_PCT || onChain.top3HolderPct >= TOP3_HOLDER_VETO_PCT)
+    ) {
+      call.status = "CONCENTRATED";
+      call.closedAt = now.toISOString();
+      call.closeReason = onChain.topHolderPct >= TOP_HOLDER_VETO_PCT
+        ? `Top holder reached ${onChain.topHolderPct}% (>= ${TOP_HOLDER_VETO_PCT}% cap)`
+        : `Top 3 holders reached ${onChain.top3HolderPct}% (>= ${TOP3_HOLDER_VETO_PCT}% cap)`;
+      alerts.push(
+        `🔒 <b>CLOSED — CONCENTRATION LIMIT</b> — $${call.symbol}\n\n` +
+        `Top holder: ${onChain.topHolderPct}% | Top 3: ${onChain.top3HolderPct}%\n` +
+        `Price: ${multiple.toFixed(2)}x since call\n\n` +
+        `Supply concentration crossed the same limit Aboki uses to skip a new buy — no longer tracking this one.`
       );
     }
   }
@@ -405,6 +428,7 @@ export function getDailySummary(): string {
   const mooned = valid.filter(c => c.status === "MOONED");
   const rugged = valid.filter(c => c.status === "RUGGED" && new Date(c.calledAt) > last24h);
   const dead = valid.filter(c => c.status === "DEAD" && new Date(c.calledAt) > last24h);
+  const concentrated = valid.filter(c => c.status === "CONCENTRATED" && new Date(c.calledAt) > last24h);
 
   let summary = `📊 <b>ABOKI DAILY REPORT</b>\n`;
   summary += `━━━━━━━━━━━━━━━━━━\n`;
@@ -413,7 +437,8 @@ export function getDailySummary(): string {
   summary += `👁 Currently tracking: ${active.length}\n`;
   summary += `🌙 Mooned: ${mooned.length}\n`;
   summary += `💀 Rugged: ${rugged.length}\n`;
-  summary += `⚰ Dead: ${dead.length}\n\n`;
+  summary += `⚰ Dead: ${dead.length}\n`;
+  summary += `🔒 Concentration-closed: ${concentrated.length}\n\n`;
 
   if (active.length > 0) {
     summary += `<b>ACTIVE CALLS:</b>\n`;
