@@ -263,7 +263,12 @@ function analyse(calls) {
   // across real closed calls. Finds the LOWEST X that clears a target win
   // rate with enough samples. Never recommends going below the current
   // floor already in the config file — this only ever tightens the gate,
-  // matching the stated goal of fewer, better calls, not a random walk.
+  // Fully bidirectional now — moves toward whatever threshold the CURRENT
+  // full dataset actually supports, up or down. It isn't a random walk:
+  // it's always picking the LOWEST threshold that clears the win-rate bar
+  // with enough samples, using every closed call on record each time. If
+  // nothing clears the bar at all, falls back to the lowest candidate
+  // rather than staying stuck at a value the evidence no longer supports.
   const CONF_FLOOR_CANDIDATES = [72, 75, 78, 80, 82, 85, 88, 90, 92, 95];
   const CONF_FLOOR_MIN_SAMPLES = 20;
   const CONF_FLOOR_TARGET_WINRATE = 35; // percent
@@ -281,14 +286,14 @@ function analyse(calls) {
          f.winRate !== null &&
          f.winRate >= CONF_FLOOR_TARGET_WINRATE
   );
-  const bestFloor = qualifying.length > 0 ? qualifying[0].threshold : null;
+  const bestFloor = qualifying.length > 0 ? qualifying[0].threshold : CONF_FLOOR_CANDIDATES[0];
   const confidenceFloor = {
     scoreVarName: "MIN_CONFIDENCE_FLOOR",
     currentFloor,
     sweep: floorSweep,
     targetWinRate: CONF_FLOOR_TARGET_WINRATE,
     minSamplesRequired: CONF_FLOOR_MIN_SAMPLES,
-    recommendedFloor: bestFloor !== null && bestFloor > currentFloor ? bestFloor : currentFloor,
+    recommendedFloor: bestFloor,
   };
 
   return {
