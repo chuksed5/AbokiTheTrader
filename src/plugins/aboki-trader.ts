@@ -377,21 +377,6 @@ async function tradingLoop(runtime: IAgentRuntime): Promise<void> {
 
         console.log(`📊 Analyzing ${token.symbol} MC:$${mc.toFixed(0)}...`);
 
-        // Whale analysis
-        const earlyBuyers = await getEarlyBuyers(token.mint, token.symbol);
-        const whaleActivity = checkWhaleActivity(token.mint, earlyBuyers);
-
-        if (earlyBuyers.length > 0) {
-          for (const buyer of earlyBuyers.slice(0, 5)) {
-            await scoreWallet(buyer, token.mint, token.symbol, mc, 60);
-          }
-          detectCoordination(token.mint, token.symbol, earlyBuyers, mc);
-        }
-
-        if (whaleActivity.hasWhales) {
-          console.log(`🐋 ${token.symbol}: ${whaleActivity.whaleCount} whales | ${whaleActivity.insiderCount} insiders | Recommendation: ${whaleActivity.recommendation}`);
-        }
-
         // AI scoring
         const score = await scoreToken(token, dexData, runtime, memory.rules);
 
@@ -434,6 +419,26 @@ async function tradingLoop(runtime: IAgentRuntime): Promise<void> {
         let holderSnapshot: Awaited<ReturnType<typeof getHolderConcentration>> = null;
 
         if (score.shouldBuy && score.confidence >= threshold) {
+          // Whale/early-buyer analysis — moved here from before scoring.
+          // scoreToken() never actually reads this data (confirmed — it only
+          // takes token/dexData/rules), so running it on every MC-range
+          // candidate was pure Helius quota waste on tokens that were going
+          // to SKIP on free DexScreener signals anyway. Now it only spends
+          // Helius quota on candidates that already cleared everything free.
+          const earlyBuyers = await getEarlyBuyers(token.mint, token.symbol);
+          const whaleActivity = checkWhaleActivity(token.mint, earlyBuyers);
+
+          if (earlyBuyers.length > 0) {
+            for (const buyer of earlyBuyers.slice(0, 5)) {
+              await scoreWallet(buyer, token.mint, token.symbol, mc, 60);
+            }
+            detectCoordination(token.mint, token.symbol, earlyBuyers, mc);
+          }
+
+          if (whaleActivity.hasWhales) {
+            console.log(`🐋 ${token.symbol}: ${whaleActivity.whaleCount} whales | ${whaleActivity.insiderCount} insiders | Recommendation: ${whaleActivity.recommendation}`);
+          }
+
           holderSnapshot = await getHolderConcentration(token.mint, dexData?.pairAddress);
 
           if (!holderSnapshot) {

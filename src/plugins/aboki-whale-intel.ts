@@ -700,7 +700,13 @@ export async function getWalletFundingTime(
 
         const rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${heliusKey}`;
         const PAGE_LIMIT = 1000;
-        const MAX_PAGES = 3;
+        // A wallet that needs more than 1 page already has 1000+ transactions
+        // and gets treated as "established, not a fresh bundler" below either
+        // way (see reachedTrueStart) — so paging further than page 1 never
+        // changes the outcome, it only spends extra Helius calls to arrive
+        // at the same "not suspicious" conclusion. Capped at 1 for that
+        // reason: same detection accuracy, 3x fewer calls per wallet checked.
+        const MAX_PAGES = 1;
 
         let before: string | undefined;
         let lastPage: any[] = [];
