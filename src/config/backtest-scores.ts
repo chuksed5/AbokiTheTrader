@@ -34,10 +34,15 @@ export const TOP3_HOLDER_VETO_PCT = 35;  // top 3 combined owning >= this % bloc
 // BACKTEST_CONFIDENCE_FLOOR_START — auto-updated by scripts/backtest.mjs
 // Hard floor on the confidence threshold, sourced from cumulative real
 // win-rate data (not the live risk-profile system's short-window reaction).
-// Can only ever raise the effective bar, never lower it below what the
-// live system already wants — see analyseConfidenceFloor() in backtest.mjs.
-// Last run: never (default matches the original NORMAL threshold)
-export const MIN_CONFIDENCE_FLOOR = 72;
+// Bidirectional — moves up OR down each run to match what the CURRENT full
+// dataset actually supports, so a threshold that overshoots (as 88% did,
+// dropping real win rate to 13.5% at n=52 despite a historical 36% read)
+// self-corrects rather than getting stuck. See analyseConfidenceFloor() in
+// backtest.mjs. The live risk-profile system can still go more conservative
+// on a bad streak — Math.max() at the call site means this is a floor under
+// that system, not a replacement for it.
+// Last run: 2026-09-10 06:52:07 GMT | Closed calls: 687 | At >=88%: 252 samples, 36% win rate
+export const MIN_CONFIDENCE_FLOOR = 88;
 // BACKTEST_CONFIDENCE_FLOOR_END
 
 // BACKTEST_COMBO_VETO_START — auto-updated by scripts/backtest.mjs
