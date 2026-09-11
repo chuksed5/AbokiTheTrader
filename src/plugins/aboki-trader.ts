@@ -287,9 +287,10 @@ async function tradingLoop(runtime: IAgentRuntime): Promise<void> {
       // The live risk-profile system reacts fast to recent trades (good for
       // catching a bad streak quickly) but only looks at a short window.
       // MIN_CONFIDENCE_FLOOR is the backtest harness's slower, much
-      // larger-sample verdict on what confidence level actually wins —
-      // it can only push the bar UP, never below what the risk profile
-      // already wants, so the two systems complement rather than fight.
+      // larger-sample verdict, and it can move up OR down over time as
+      // evidence changes. Math.max() here only means the live system can
+      // still demand MORE caution on a bad streak — it can never pull the
+      // effective bar below the floor the full dataset currently supports.
       const threshold = Math.max(riskProfile.confidenceThreshold, MIN_CONFIDENCE_FLOOR);
 
       console.log(`🔍 Scanning... (scan #${scanCount}) | Risk: ${riskProfile.currentLevel} | Threshold: ${threshold}%`);
