@@ -418,6 +418,7 @@ async function tradingLoop(runtime: IAgentRuntime): Promise<void> {
         // A confirmed cluster is a hard veto, computed BEFORE the trade
         // log below so the log reflects the real final decision.
         let holderSnapshot: Awaited<ReturnType<typeof getHolderConcentration>> = null;
+        let whaleActivity: ReturnType<typeof checkWhaleActivity> | undefined;
 
         if (score.shouldBuy && score.confidence >= threshold) {
           // Whale/early-buyer analysis — moved here from before scoring.
@@ -427,7 +428,7 @@ async function tradingLoop(runtime: IAgentRuntime): Promise<void> {
           // to SKIP on free DexScreener signals anyway. Now it only spends
           // Helius quota on candidates that already cleared everything free.
           const earlyBuyers = await getEarlyBuyers(token.mint, token.symbol);
-          const whaleActivity = checkWhaleActivity(token.mint, earlyBuyers);
+          whaleActivity = checkWhaleActivity(token.mint, earlyBuyers);
 
           if (earlyBuyers.length > 0) {
             for (const buyer of earlyBuyers.slice(0, 5)) {
@@ -513,7 +514,7 @@ async function tradingLoop(runtime: IAgentRuntime): Promise<void> {
               ? {
                   topHolderPct: holderSnapshot.topHolderPct,
                   top3HolderPct: holderSnapshot.top3HolderPct,
-                  whaleCount: whaleActivity.whaleCount,
+                  whaleCount: whaleActivity?.whaleCount ?? 0,
                 }
               : undefined
           );
